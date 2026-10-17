@@ -391,8 +391,8 @@ async def auto_legg_til(
     save_schedules(schedules)
 
     await interaction.response.send_message(
-        f"🤫 Satt opp i skjul! **{medlem.display_name}** ({medlem.mention}) vil nå få et nytt tilfeldig navn "
-        f"fra `{språk}.wikipedia.org` hver dag kl. **{klokkeslett}** ({TIMEZONE}) helt uten at det postes noen melding.",
+        f"Sånn. **{medlem.display_name}** ({medlem.mention}) vil nå få et nytt tilfeldig navn "
+        f"fra `{språk}.wikipedia.org` hver dag kl. **{klokkeslett}** ({TIMEZONE}).",
         ephemeral=True,
     )
 
