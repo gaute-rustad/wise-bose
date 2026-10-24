@@ -3,7 +3,8 @@ import json
 import logging
 import os
 import re
-from datetime import datetime
+from datetime import datetime, timezone
+from email.utils import parsedate_to_datetime
 from pathlib import Path
 from typing import Literal, Optional
 from zoneinfo import ZoneInfo
@@ -67,6 +68,26 @@ def has_time_passed(current_hm: str, target_hm: str) -> bool:
     return current_hm >= target_hm
 
 
+def parse_retry_after(header_val: Optional[str], default_seconds: float = 5.0) -> float:
+    """
+    Tolker Retry-After-headeren (enten antall sekunder eller HTTP-dato).
+    Hvis headeren mangler eller er ugyldig, returneres `default_seconds` (5.0s).
+    """
+    if not header_val:
+        return default_seconds
+    try:
+        return max(float(header_val), 0.1)
+    except ValueError:
+        try:
+            retry_dt = parsedate_to_datetime(header_val)
+            if retry_dt.tzinfo is None:
+                retry_dt = retry_dt.replace(tzinfo=timezone.utc)
+            diff = (retry_dt - datetime.now(timezone.utc)).total_seconds()
+            return max(diff, default_seconds)
+        except Exception:
+            return default_seconds
+
+
 async def fetch_random_wiki_titles(
     count: int = 1, lang: str = "en", max_length: int = 32
 ) -> list[str]:
@@ -102,17 +123,25 @@ async def fetch_random_wiki_titles(
             try:
                 async with session.get(url, params=params) as resp:
                     if resp.status == 429:
-                        retry_after = float(resp.headers.get("Retry-After", 2.0))
-                        logger.warning(
-                            f"[Wikipedia] Rate-limit (HTTP 429) fra Wikipedia (forsøk {attempts}/15) – venter {retry_after}s..."
-                        )
-                        await asyncio.sleep(retry_after)
+                        raw_retry = resp.headers.get("Retry-After")
+                        wait_seconds = parse_retry_after(raw_retry, default_seconds=5.0)
+                        if raw_retry:
+                            logger.warning(
+                                f"[Wikipedia] Rate-limit (HTTP 429) fra Wikipedia (forsøk {attempts}/15) – "
+                                f"følger Retry-After-header ({raw_retry}) og venter {wait_seconds:.1f}s..."
+                            )
+                        else:
+                            logger.warning(
+                                f"[Wikipedia] Rate-limit (HTTP 429) uten Retry-After-header (forsøk {attempts}/15) – "
+                                f"venter {wait_seconds:.1f}s før neste forsøk..."
+                            )
+                        await asyncio.sleep(wait_seconds)
                         continue
                     if resp.status != 200:
                         logger.warning(
-                            f"[Wikipedia] API svarte med HTTP {resp.status} (forsøk {attempts}/15)"
+                            f"[Wikipedia] API svarte med HTTP {resp.status} (forsøk {attempts}/15) – venter 5.0s..."
                         )
-                        await asyncio.sleep(1.5)
+                        await asyncio.sleep(5.0)
                         continue
                     data = await resp.json()
                     random_pages = data.get("query", {}).get("random", [])
@@ -138,8 +167,10 @@ async def fetch_random_wiki_titles(
                         if len(valid_titles) >= count:
                             break
             except Exception as e:
-                logger.error(f"[Wikipedia] Feil ved henting fra API (forsøk {attempts}/15): {e}")
-                await asyncio.sleep(1)
+                logger.error(
+                    f"[Wikipedia] Feil ved henting fra API (forsøk {attempts}/15): {e} – venter 5.0s..."
+                )
+                await asyncio.sleep(5.0)
 
     if len(valid_titles) < count:
         logger.error(
