@@ -236,6 +236,55 @@ async def change_members_nicknames(
     return succeeded, failed
 
 
+async def send_split_message(
+    interaction: discord.Interaction,
+    text: str,
+    ephemeral: bool = True,
+    max_length: int = 1900,
+) -> None:
+    """
+    Sender en melding som kan overstige Discords grense på 2000 tegn
+    ved å splitte den opp i mindre biter (chunks).
+    """
+    if len(text) <= max_length:
+        if interaction.response.is_done():
+            await interaction.followup.send(text, ephemeral=ephemeral)
+        else:
+            await interaction.response.send_message(text, ephemeral=ephemeral)
+        return
+
+    chunks: list[str] = []
+    current_chunk: list[str] = []
+    current_len = 0
+
+    for line in text.split("\n"):
+        while len(line) > max_length:
+            if current_chunk:
+                chunks.append("\n".join(current_chunk))
+                current_chunk = []
+                current_len = 0
+            chunks.append(line[:max_length])
+            line = line[max_length:]
+
+        line_len = len(line) + 1
+        if current_len + line_len > max_length and current_chunk:
+            chunks.append("\n".join(current_chunk))
+            current_chunk = [line]
+            current_len = line_len
+        else:
+            current_chunk.append(line)
+            current_len += line_len
+
+    if current_chunk:
+        chunks.append("\n".join(current_chunk))
+
+    for idx, chunk in enumerate(chunks):
+        if idx == 0 and not interaction.response.is_done():
+            await interaction.response.send_message(chunk, ephemeral=ephemeral)
+        else:
+            await interaction.followup.send(chunk, ephemeral=ephemeral)
+
+
 def format_results(
     succeeded: list[tuple[discord.Member, str, str]],
     failed: list[tuple[discord.Member, str]],
@@ -368,7 +417,7 @@ async def wikinick_person(
     succeeded, failed = await change_members_nicknames(
         [medlem], lang=språk, source=f"/wikinick person (av {interaction.user})"
     )
-    await interaction.followup.send(format_results(succeeded, failed, språk), ephemeral=True)
+    await send_split_message(interaction, format_results(succeeded, failed, språk), ephemeral=True)
 
 
 @wiki_group.command(
@@ -414,7 +463,7 @@ async def wikinick_flere(
     succeeded, failed = await change_members_nicknames(
         target_members, lang=språk, source=f"/wikinick flere (av {interaction.user})"
     )
-    await interaction.followup.send(format_results(succeeded, failed, språk), ephemeral=True)
+    await send_split_message(interaction, format_results(succeeded, failed, språk), ephemeral=True)
 
 
 @wiki_group.command(
@@ -458,7 +507,7 @@ async def wikinick_rolle(
     succeeded, failed = await change_members_nicknames(
         target_members, lang=språk, source=f"/wikinick rolle @{rolle.name} (av {interaction.user})"
     )
-    await interaction.followup.send(format_results(succeeded, failed, språk), ephemeral=True)
+    await send_split_message(interaction, format_results(succeeded, failed, språk), ephemeral=True)
 
 
 @wiki_group.command(
@@ -495,7 +544,7 @@ async def wikinick_alle(
     succeeded, failed = await change_members_nicknames(
         target_members, lang=språk, source=f"/wikinick alle (av {interaction.user})"
     )
-    await interaction.followup.send(format_results(succeeded, failed, språk), ephemeral=True)
+    await send_split_message(interaction, format_results(succeeded, failed, språk), ephemeral=True)
 
 
 # --- Automatisering (f.eks. nytt navn til Hein hver midnatt) ---
@@ -610,7 +659,7 @@ async def auto_liste(interaction: discord.Interaction) -> None:
             f"• <@{user_id}> — hver dag kl. **{info.get('time', '00:00')}** "
             f"(`{info.get('lang', 'en')}.wikipedia.org`, sist kjørt: `{last_run}`)"
         )
-    await interaction.response.send_message("\n".join(lines), ephemeral=True)
+    await send_split_message(interaction, "\n".join(lines), ephemeral=True)
 
 
 @bot.tree.error
@@ -622,6 +671,11 @@ async def on_app_command_error(
         f"[Slash-kommando] Feil under kjøring av '/{cmd_name}' (av {interaction.user}): {error}",
         exc_info=True,
     )
+    try:
+        err_msg = f"⚠️ Det oppsto en feil under kjøring av `/{cmd_name}`:\n```{error}```"
+        await send_split_message(interaction, err_msg, ephemeral=True)
+    except Exception:
+        pass
 
 
 bot.tree.add_command(wiki_group)
