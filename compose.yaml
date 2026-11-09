@@ -1,0 +1,10 @@
+services:
+  discord-bot:
+    build: .
+    container_name: baldarinfromasj
+    restart: unless-stopped
+    env_file:
+      - .env
+    volumes:
+      # Mounter hele mappen så endringer etter 'git pull' og schedules.json/bot.log persisteres
+      - .:/app
